@@ -682,6 +682,187 @@ async function cmdRef(flags) {
   console.log(JSON.stringify(r.data, null, 2));
 }
 
+// ---------------------------------------------------------------------------
+// Sync harian + streak
+// ---------------------------------------------------------------------------
+
+function tzInfo() {
+  let timeZone = 'UTC';
+  try {
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {}
+  return { timeZone, utcOffsetMinutes: -new Date().getTimezoneOffset() };
+}
+
+async function fetchSyncState() {
+  const r = await api.get('/sync/state');
+  return r.data ?? {};
+}
+
+/** POST /sync — body mengikuti syncDeviceInfoRequestSchema di bundle app. */
+async function performSync() {
+  const body = { deviceId: getDeviceId(), platform: 'android', ...tzInfo() };
+  const r = await api.post('/sync', body);
+  return r.data ?? {};
+}
+
+const pick = (obj, keys) => {
+  for (const k of keys) {
+    if (obj && obj[k] !== undefined && obj[k] !== null) return obj[k];
+  }
+  return undefined;
+};
+
+function syncReadiness(st) {
+  const nextAt = pick(st, ['nextSyncAt', 'nextSync', 'syncReadyAt', 'nextSyncTime']);
+  const canSync = pick(st, ['canSync', 'canSyncNow', 'syncAvailable']);
+  const lastAt = pick(st, ['lastSyncAt', 'lastSync', 'syncedAt']);
+  const cooldownH = pick(st, ['cooldownHours', 'cooldown']);
+  const nextMs = nextAt ? Date.parse(nextAt) : NaN;
+  const readyByTime = Number.isFinite(nextMs) ? Date.now() >= nextMs : null;
+  return { canSync, nextAt, nextMs, lastAt, cooldownH, readyByTime };
+}
+
+function hms(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  const neg = ms < 0;
+  let t = Math.round(Math.abs(ms) / 1000);
+  const h = Math.floor(t / 3600);
+  t -= h * 3600;
+  const m = Math.floor(t / 60);
+  const sec = t - m * 60;
+  return `${neg ? '-' : ''}${h > 0 ? h + 'j ' : ''}${m}m ${sec}s`;
+}
+
+function showStreak(st) {
+  const streak = st.streak ?? st.streakInfo ?? {};
+  const tier = pick(streak, ['tier', 'tierKey', 'currentTier']) ?? pick(st, ['streakTier', 'memberTier']);
+  const days = pick(streak, ['days', 'count', 'current', 'dayCount']) ?? pick(st, ['streakDays', 'streakCount']);
+  const nextTierIn = pick(streak, ['daysToNextTier', 'toNextTier']) ?? pick(st, ['daysToNextTier']);
+  const shield = pick(streak, ['shield', 'shields', 'shieldCount']);
+
+  console.log(C.b('— streak —'));
+  if (tier !== undefined) console.log(`  tier          ${tier}`);
+  if (days !== undefined) console.log(`  hari          ${days}`);
+  if (nextTierIn !== undefined) console.log(`  ke tier next  ${nextTierIn} hari`);
+  if (shield !== undefined) console.log(`  shield        ${shield}`);
+
+  const known = new Set(['streak', 'streakInfo', 'streakTier', 'memberTier', 'streakDays', 'streakCount', 'daysToNextTier']);
+  const rest = Object.keys(st).filter((k) => !known.has(k) && !['nextSyncAt', 'lastSyncAt', 'canSync', 'canSyncNow', 'user'].includes(k));
+  if (tier === undefined && days === undefined) {
+    console.log(C.y('  (bentuk data streak belum dikenal — jalankan: node zoi.js state --debug)'));
+    console.log(JSON.stringify(st, null, 2).slice(0, 900));
+    return;
+  }
+  if (rest.length) console.log(C.dim(`  field lain: ${rest.slice(0, 10).join(', ')}`));
+}
+
+function showSyncResult(data) {
+  const bd = data.breakdown ?? data.sync ?? data.reward ?? {};
+  const total = pick(data, ['total', 'amount', 'reward', 'earned']) ?? pick(bd, ['total']);
+  console.log(C.g('✔ sync berhasil'));
+  const parts = [];
+  for (const [k, v] of Object.entries(bd)) {
+    if (typeof v === 'number' || typeof v === 'string') parts.push(`${k}=${v}`);
+  }
+  if (parts.length) console.log(`  rincian   ${parts.join('  ')}`);
+  if (total !== undefined) console.log(`  total     ${total}`);
+  if (data.streak || data.streakInfo) {
+    const st = data.streak ?? data.streakInfo;
+    const tier = pick(st, ['tier', 'tierKey']);
+    const days = pick(st, ['days', 'count', 'current']);
+    if (tier !== undefined || days !== undefined) console.log(`  streak    ${days ?? '?'} hari · tier ${tier ?? '?'}`);
+  }
+  if (!parts.length && total === undefined) console.log(C.dim(`  respons: ${JSON.stringify(data).slice(0, 400)}`));
+}
+
+async function cmdState(flags) {
+  requireToken();
+  const st = await fetchSyncState();
+  if (flags.json) return console.log(JSON.stringify(st, null, 2));
+  const r = syncReadiness(st);
+  console.log(C.b('— sync state —'));
+  console.log(`  bisa sync     ${r.canSync === undefined ? (r.readyByTime ? C.g('ya (jadwal)') : C.dim('belum')) : r.canSync ? C.g('ya') : C.dim('belum')}`);
+  if (r.lastAt) console.log(`  terakhir      ${new Date(r.lastAt).toLocaleString()}`);
+  if (r.nextAt) console.log(`  berikutnya    ${new Date(r.nextAt).toLocaleString()} (${hms(r.nextMs - Date.now())})`);
+  if (r.cooldownH !== undefined) console.log(`  cooldown      ${r.cooldownH} jam`);
+  showStreak(st);
+}
+
+async function cmdSync(flags) {
+  requireToken();
+  const st = await fetchSyncState().catch(() => ({}));
+  const r = syncReadiness(st);
+  if (!flags.force && r.canSync === false && r.readyByTime === false) {
+    console.log(C.y(`belum waktunya sync — berikutnya ${new Date(r.nextAt).toLocaleString()} (${hms(r.nextMs - Date.now())})`));
+    return;
+  }
+  if (flags['dry-run']) {
+    console.log(C.dim('dry-run: POST /sync tidak dikirim'));
+    console.log(JSON.stringify({ deviceId: mask(getDeviceId(), 6), platform: 'android', ...tzInfo() }, null, 2));
+    return;
+  }
+  const data = await performSync();
+  if (flags.json) return console.log(JSON.stringify(data, null, 2));
+  showSyncResult(data);
+  const after = await fetchSyncState().catch(() => null);
+  if (after) {
+    const r2 = syncReadiness(after);
+    if (r2.nextAt) console.log(C.dim(`  sync berikutnya ${new Date(r2.nextAt).toLocaleString()} (${hms(r2.nextMs - Date.now())})`));
+    showStreak(after);
+  }
+}
+
+async function cmdAuto(flags) {
+  const dry = flags['dry-run'] === true;
+  const once = flags.once === true;
+  requireToken();
+  console.log(C.b('auto sync + streak') + C.dim(` — ${dry ? 'DRY-RUN' : 'LIVE'}, Ctrl+C stop`));
+
+  let iterations = 0;
+  for (;;) {
+    iterations++;
+    try {
+      const st = await fetchSyncState();
+      const r = syncReadiness(st);
+
+      if (r.canSync === false && r.readyByTime === false) {
+        const waitMs = Math.max(30_000, Math.min((r.nextMs ?? Date.now() + 3_600_000) - Date.now() + 2000, 30 * 60 * 1000));
+        if (once) {
+          console.log(C.y(`belum waktunya — berikutnya ${new Date(r.nextAt).toLocaleString()} (${hms(r.nextMs - Date.now())})`));
+          showStreak(st);
+          return;
+        }
+        log(`belum waktunya · streak ${pick(st.streak ?? {}, ['days', 'count']) ?? '?'} · tidur ${hms(waitMs)}`);
+        await sleep(waitMs);
+        continue;
+      }
+
+      if (dry) {
+        log('[dry] akan POST /sync');
+        showStreak(st);
+        return;
+      }
+
+      const data = await performSync();
+      showSyncResult(data);
+      const after = await fetchSyncState().catch(() => null);
+      if (after) showStreak(after);
+      if (once) return;
+
+      const r2 = after ? syncReadiness(after) : r;
+      const waitMs = Number.isFinite(r2.nextMs) ? Math.max(30_000, Math.min(r2.nextMs - Date.now() + 2000, 30 * 60 * 1000)) : 15 * 60 * 1000;
+      log(C.dim(`  tidur ${hms(waitMs)}`));
+      await sleep(withJitter(waitMs));
+    } catch (e) {
+      if (e.code === 'invalid_session' || e.http === 401) die('token ditolak — jalankan: node zoi.js login', 3);
+      log(C.r(`  error: ${e.message} — retry 60s`));
+      if (once) throw e;
+      await sleep(60_000);
+    }
+  }
+}
+
 async function cmdRaw(method, p, bodyArg, flags) {
   if (!p) die(`pakai: ${method.toLowerCase()} /path [json]`);
   let body;
@@ -705,6 +886,9 @@ const HELP = `zoi.js — client zoi.network (creds di .env)
   setup [--email E --password P] [--force]
   edit | env | logout
   login [--email E] [--password P] [--otp CODE] [--debug]
+  state | streak      status sync + streak (read-only)
+  sync               sync sekarang (--force, --dry-run, --json)
+  auto               sync otomatis mengikuti jadwal (--once, --dry-run)
   me | balance | tx | ref
   get <path> | post <path> '<json>'
 
@@ -732,7 +916,7 @@ async function main() {
       return cmdLogin(flags);
   }
 
-  const known = ['me', 'balance', 'tx', 'ref', 'get', 'post'];
+  const known = ['me', 'state', 'streak', 'sync', 'auto', 'balance', 'tx', 'ref', 'get', 'post'];
   if (!known.includes(cmd)) die(`command tidak dikenal: ${cmd}`);
 
   if (typeof flags.token === 'string' && flags.token) {
@@ -744,6 +928,14 @@ async function main() {
   switch (cmd) {
     case 'me':
       return cmdMe(flags);
+    case 'state':
+      return cmdState(flags);
+    case 'sync':
+      return cmdSync(flags);
+    case 'streak':
+      return cmdState(flags);
+    case 'auto':
+      return cmdAuto(flags);
     case 'balance':
       return cmdBalance(flags);
     case 'tx':

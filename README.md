@@ -47,6 +47,26 @@ node zoi.js balance
 node zoi.js tx
 ```
 
+## Sync harian & streak
+
+```bash
+node zoi.js state     # sudah bisa sync atau belum + kondisi streak
+node zoi.js sync      # sync sekarang
+node zoi.js auto      # sync otomatis mengikuti jadwal server
+```
+
+Streak ikut naik dari sync yang konsisten, jadi cukup jalankan `auto` dan biarkan.
+
+Jalan terus di Termux:
+
+```bash
+termux-wake-lock
+nohup node zoi.js auto >> zoi-auto.log 2>&1 &
+tail -f zoi-auto.log
+```
+
+Stop: `pkill -f "zoi.js auto"`.
+
 ## Perintah lain
 
 | Perintah | Fungsi |
@@ -55,6 +75,9 @@ node zoi.js tx
 | `edit` | buka `.env` di nano/Notepad |
 | `env` | lihat isi `.env` (disamarkan) |
 | `logout` | hapus token dari `.env` |
+| `state` / `streak` | status sync + streak (read-only) |
+| `sync` | sync sekarang (`--force` untuk abaikan jadwal, `--dry-run` untuk uji) |
+| `auto` | sync otomatis sesuai `nextSyncAt` (`--once`, `--dry-run`) |
 | `ref` | statistik referral |
 | `get <path>` / `post <path> '<json>'` | panggil endpoint apa pun |
 

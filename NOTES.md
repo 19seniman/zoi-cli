@@ -24,6 +24,15 @@ Error yang sudah terverifikasi:
 {"error":{"code":"invalid_session","message":"Invalid bearer token"}}
 ```
 
+## Sync & streak
+
+| Method | Path | Catatan |
+|---|---|---|
+| GET | `/sync/state` | status: `canSync`, `nextSyncAt`, `lastSyncAt`, `cooldownHours`, `streak*` |
+| POST | `/sync` | body mengikuti `syncDeviceInfoRequestSchema`: `deviceId`, `platform`, `timeZone`, `utcOffsetMinutes` |
+
+Streak **tidak** punya endpoint sendiri — datanya ada di `sync.streakInfo.*` pada respons `/sync` dan `/sync/state`. Field tier/streak dibaca fleksibel (`tier`, `tierKey`, `days`, `count`, `daysToNextTier`); kalau bentuk aslinya beda, `node zoi.js state --debug` akan menampilkan JSON mentahnya.
+
 ## Endpoint lain yang ada (401 = butuh token)
 
 ```
