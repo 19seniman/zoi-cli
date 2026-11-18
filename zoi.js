@@ -846,10 +846,12 @@ const pick = (obj, keys) => {
 };
 
 function syncReadiness(st) {
-  const nextAt = pick(st, ['nextSyncAt', 'nextSync', 'syncReadyAt', 'nextSyncTime']);
-  const canSync = pick(st, ['canSync', 'canSyncNow', 'syncAvailable']);
-  const lastAt = pick(st, ['lastSyncAt', 'lastSync', 'syncedAt']);
-  const cooldownH = pick(st, ['cooldownHours', 'cooldown']);
+  // /sync/state membungkus datanya: { now, balance, humanVerificationRequired, sync, referral }
+  const core = (st && st.sync) || st || {};
+  const nextAt = pick(core, ['nextSyncAt', 'nextSync', 'syncReadyAt', 'nextSyncTime']);
+  const canSync = pick(core, ['canSync', 'canSyncNow', 'syncAvailable']);
+  const lastAt = pick(core, ['lastSyncAt', 'lastSync', 'syncedAt']);
+  const cooldownH = pick(core, ['cooldownHours', 'cooldown']);
   const nextMs = nextAt ? Date.parse(nextAt) : NaN;
   const readyByTime = Number.isFinite(nextMs) ? Date.now() >= nextMs : null;
   return { canSync, nextAt, nextMs, lastAt, cooldownH, readyByTime };
@@ -867,7 +869,8 @@ function hms(ms) {
 }
 
 function showStreak(st) {
-  const streak = st.streak ?? st.streakInfo ?? {};
+  const core = (st && st.sync) || st || {};
+  const streak = core.streak ?? core.streakInfo ?? st.streak ?? st.streakInfo ?? {};
   const tier = pick(streak, ['tier', 'tierKey', 'currentTier']) ?? pick(st, ['streakTier', 'memberTier']);
   const days = pick(streak, ['days', 'count', 'current', 'dayCount']) ?? pick(st, ['streakDays', 'streakCount']);
   const nextTierIn = pick(streak, ['daysToNextTier', 'toNextTier']) ?? pick(st, ['daysToNextTier']);
@@ -879,8 +882,12 @@ function showStreak(st) {
   if (nextTierIn !== undefined) console.log(`  ke tier next  ${nextTierIn} hari`);
   if (shield !== undefined) console.log(`  shield        ${shield}`);
 
-  const known = new Set(['streak', 'streakInfo', 'streakTier', 'memberTier', 'streakDays', 'streakCount', 'daysToNextTier']);
-  const rest = Object.keys(st).filter((k) => !known.has(k) && !['nextSyncAt', 'lastSyncAt', 'canSync', 'canSyncNow', 'user'].includes(k));
+  const known = new Set([
+    'streak', 'streakInfo', 'streakTier', 'memberTier', 'streakDays', 'streakCount', 'daysToNextTier',
+    'now', 'balance', 'humanVerificationRequired', 'sync', 'referral', 'user',
+    'nextSyncAt', 'lastSyncAt', 'canSync', 'canSyncNow', 'cooldownHours',
+  ]);
+  const rest = Object.keys(st).filter((k) => !known.has(k));
   if (tier === undefined && days === undefined) {
     console.log(C.y('  (bentuk data streak belum dikenal — jalankan: node zoi.js state --debug)'));
     console.log(JSON.stringify(st, null, 2).slice(0, 900));
@@ -893,9 +900,21 @@ function showSyncResult(data) {
   const bd = data.breakdown ?? data.sync ?? data.reward ?? {};
   const total = pick(data, ['total', 'amount', 'reward', 'earned']) ?? pick(bd, ['total']);
   console.log(C.g('✔ sync berhasil'));
+  const label = {
+    base: 'dasar',
+    streakMultiplier: 'pengali streak',
+    referralBonus: 'bonus referral',
+    networkBonus: 'bonus jaringan',
+    networkShare: 'share jaringan',
+    invitationBonus: 'bonus undangan',
+    total: 'total',
+  };
   const parts = [];
   for (const [k, v] of Object.entries(bd)) {
-    if (typeof v === 'number' || typeof v === 'string') parts.push(`${k}=${v}`);
+    if (typeof v === 'number' || typeof v === 'string') {
+      const show = k === 'streakMultiplier' ? `${v}×` : v;
+      parts.push(`${label[k] ?? k}=${show}`);
+    }
   }
   if (parts.length) console.log(`  rincian   ${parts.join('  ')}`);
   if (total !== undefined) console.log(`  total     ${total}`);
@@ -914,10 +933,23 @@ async function cmdState(flags) {
   if (flags.json) return console.log(JSON.stringify(st, null, 2));
   const r = syncReadiness(st);
   console.log(C.b('— sync state —'));
-  console.log(`  bisa sync     ${r.canSync === undefined ? (r.readyByTime ? C.g('ya (jadwal)') : C.dim('belum')) : r.canSync ? C.g('ya') : C.dim('belum')}`);
+  const canSyncLabel =
+    r.canSync !== undefined
+      ? r.canSync
+        ? C.g('ya')
+        : C.dim('belum')
+      : r.readyByTime === true
+        ? C.g('ya (jadwal)')
+        : r.readyByTime === false
+          ? C.dim('belum')
+          : C.dim('tidak diketahui');
+  console.log(`  bisa sync     ${canSyncLabel}`);
   if (r.lastAt) console.log(`  terakhir      ${new Date(r.lastAt).toLocaleString()}`);
   if (r.nextAt) console.log(`  berikutnya    ${new Date(r.nextAt).toLocaleString()} (${hms(r.nextMs - Date.now())})`);
   if (r.cooldownH !== undefined) console.log(`  cooldown      ${r.cooldownH} jam`);
+  if (st.balance !== undefined) console.log(`  saldo         ${typeof st.balance === 'object' ? JSON.stringify(st.balance) : st.balance}`);
+  if (st.humanVerificationRequired !== undefined)
+    console.log(`  human verify  ${st.humanVerificationRequired ? C.y('diperlukan') : C.g('tidak')}`);
   showStreak(st);
 }
 

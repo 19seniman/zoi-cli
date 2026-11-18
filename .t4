@@ -1,0 +1,3 @@
+ZOI_EMAIL=t@e.com
+ZOI_TOKEN=fake
+ZOI_API_BASE=http://127.0.0.1:8899/v1
