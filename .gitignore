@@ -1,5 +1,7 @@
 .env
 .env.*
 !.env.example
+.zoi-pending.json
+.t[0-9]*
 node_modules/
 *.log

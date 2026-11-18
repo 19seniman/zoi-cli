@@ -966,7 +966,18 @@ async function cmdSync(flags) {
     console.log(JSON.stringify({ deviceId: mask(getDeviceId(), 6), platform: 'android', ...tzInfo() }, null, 2));
     return;
   }
-  const data = await performSync();
+  let data;
+  try {
+    data = await performSync();
+  } catch (e) {
+    if (e.code === 'sync_window_not_ready' || e.http === 409) {
+      const r2 = syncReadiness(await fetchSyncState().catch(() => ({})));
+      console.log(C.y('window sync belum terbuka — sudah sync di periode ini.'));
+      if (r2.nextAt) console.log(C.dim(`  berikutnya ${new Date(r2.nextAt).toLocaleString()} (${hms(r2.nextMs - Date.now())})`));
+      return;
+    }
+    throw e;
+  }
   if (flags.json) return console.log(JSON.stringify(data, null, 2));
   showSyncResult(data);
   const after = await fetchSyncState().catch(() => null);
@@ -1020,6 +1031,15 @@ async function cmdAuto(flags) {
       await sleep(withJitter(waitMs));
     } catch (e) {
       if (e.code === 'invalid_session' || e.http === 401) die('token ditolak — jalankan: node zoi.js login', 3);
+      if (e.code === 'sync_window_not_ready' || e.http === 409) {
+        const st2 = await fetchSyncState().catch(() => null);
+        const r3 = st2 ? syncReadiness(st2) : { nextMs: NaN, nextAt: null };
+        const waitMs = Number.isFinite(r3.nextMs) ? Math.max(30_000, Math.min(r3.nextMs - Date.now() + 2000, 30 * 60 * 1000)) : 15 * 60 * 1000;
+        log(`window belum buka${r3.nextAt ? ` · berikutnya ${new Date(r3.nextAt).toLocaleString()} (${hms(r3.nextMs - Date.now())})` : ''} · tidur ${hms(waitMs)}`);
+        if (once) return;
+        await sleep(withJitter(waitMs));
+        continue;
+      }
       log(C.r(`  error: ${e.message} — retry 60s`));
       if (once) throw e;
       await sleep(60_000);
