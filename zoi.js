@@ -462,17 +462,35 @@ function scalarFields(obj) {
  * body disusun bertingkat: minimal → +semua field skalar respons sign-in.
  */
 async function verifyOtp(email, code, signInData) {
-  const extra = scalarFields(signInData);
-  const tries = [
+  const data = signInData ?? {};
+  const deviceId = getDeviceId();
+  const challengeId = data.challengeId ?? data.id;
+  const challenge = data.challenge ?? 'email_otp';
+
+  // sign-in wajib deviceId; verify kemungkinan besar juga. Semua kandidat di bawah
+  // menyertakannya, lalu variasinya hanya pada nama field kode & email.
+  const base = { challengeId, challenge };
+  const cands = [
+    { ...base, code, deviceId },
+    { ...base, otp: code, deviceId },
+    { ...base, code, email, deviceId },
+    { ...base, otp: code, email, deviceId },
+    { email, code, challengeId, deviceId },
+    { email, otp: code, challengeId, deviceId },
+    { challengeId, code, deviceId },
+    { challengeId, otp: code, deviceId },
+    { ...base, code, deviceId, identifier: email },
+    { ...base, otpCode: code, deviceId },
+    { ...base, code },
     { email, code },
-    { email, otp: code },
-    { email, code, ...extra },
-    { ...extra, email, code },
-    { email, code, challengeId: signInData?.challengeId ?? signInData?.id },
-  ].filter((b) => !Object.values(b).includes(undefined));
+  ].filter((b) => Object.values(b).every((v) => v !== undefined && v !== null && v !== ''));
 
   const errs = [];
-  for (const body of tries) {
+  const seen = new Set();
+  for (const body of cands) {
+    const sig = Object.keys(body).sort().join(',');
+    if (seen.has(sig)) continue;
+    seen.add(sig);
     try {
       const r = await request('POST', '/auth/sign-in/verify-otp', { body, auth: false });
       console.log(C.g(`✔ OTP diterima (field: ${Object.keys(body).join(', ')})`));
@@ -481,14 +499,12 @@ async function verifyOtp(email, code, signInData) {
       } catch {}
       return r.data;
     } catch (e) {
-      errs.push(`${Object.keys(body).join('+')} → ${e.code}`);
-      if (!['missing_fields', 'invalid_otp', 'invalid_code', 'otp_invalid', 'VALIDATION_ERROR'].includes(e.code)) break;
+      errs.push(`${sig} → ${e.code}`);
+      if (e.code === 'rate_limited' || e.http === 429) break;
+      if (!['missing_fields', 'invalid_otp', 'invalid_code', 'otp_invalid', 'VALIDATION_ERROR', 'challenge_expired'].includes(e.code)) break;
     }
   }
-  throw new ApiError({
-    code: 'OTP_FAILED',
-    message: errs.join('\n    '),
-  });
+  throw new ApiError({ code: 'OTP_FAILED', message: errs.join('\n    ') });
 }
 
 // ---------------------------------------------------------------------------
