@@ -103,7 +103,7 @@ node zoi.js me
 
 ## Author
 
-19 Seniman · Traktir ☕
+19Seniman · Traktir ☕
 
 BSC · ETH · Hype
 
