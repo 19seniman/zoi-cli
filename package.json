@@ -1,0 +1,9 @@
+{
+  "name": "zoi-cli",
+  "version": "1.0.0",
+  "description": "CLI untuk zoi.network: login email+password via .env, profil, wallet, transaksi, referral.",
+  "type": "module",
+  "bin": { "zoi": "./zoi.js" },
+  "scripts": { "start": "node zoi.js" },
+  "engines": { "node": ">=18" }
+}
