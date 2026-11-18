@@ -100,3 +100,15 @@ node zoi.js me
 - Kredensial baru disimpan **setelah** server menerimanya, jadi password salah tidak menimpa `.env`.
 - `.env` dibuat dengan permission `600` dan masuk `.gitignore`.
 - Detail endpoint ada di [NOTES.md](NOTES.md).
+
+## Author
+
+19 Seniman · Traktir ☕
+
+BSC · ETH · Hype
+
+```
+0xf01fb9a6855f175d3f3e28e00fa617009c38ef59
+```
+
+Tampil juga di script: `node zoi.js about`

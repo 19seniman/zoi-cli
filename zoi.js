@@ -53,6 +53,66 @@ const C = {
   c: (s) => `\x1b[36m${s}\x1b[0m`,
 };
 
+
+// --- identitas & tampilan ---------------------------------------------------
+
+const BRAND = {
+  name: 'ZOI CLI',
+  app: 'zoi.network',
+  version: '1.1.0',
+  author: '19 Seniman',
+  tip: 'Traktir \u2615',
+  networks: 'BSC \u00b7 ETH \u00b7 Hype',
+  evm: '0xf01fb9a6855f175d3f3e28e00fa617009c38ef59',
+};
+
+const TERM_W = () => Math.max(38, Math.min(process.stdout.columns || 52, 60));
+const visible = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, '');
+const padEnd = (s, w) => s + ' '.repeat(Math.max(0, w - visible(s).length));
+const center = (s, w) => {
+  const gap = Math.max(0, w - visible(s).length);
+  const left = Math.floor(gap / 2);
+  return ' '.repeat(left) + s + ' '.repeat(gap - left);
+};
+
+function banner() {
+  const w = TERM_W();
+  const inner = w - 2;
+  console.log('');
+  console.log(C.c('\u256d' + '\u2500'.repeat(inner) + '\u256e'));
+  console.log(C.c('\u2502') + center(C.b(BRAND.name) + C.dim('  \u00b7  ' + BRAND.app), inner) + C.c('\u2502'));
+  console.log(C.c('\u2502') + center(C.dim('sync harian + streak otomatis'), inner) + C.c('\u2502'));
+  console.log(C.c('\u2570' + '\u2500'.repeat(inner) + '\u256f'));
+  console.log(C.dim(`  v${BRAND.version}  \\u00b7  ${API_BASE}`));
+}
+
+function authorBox() {
+  const w = TERM_W();
+  const inner = w - 2;
+  const line = (s) => C.c('\u2502') + ' ' + padEnd(s, inner - 1) + C.c('\u2502');
+  console.log(C.c('\u256d' + '\u2500'.repeat(inner) + '\u256e'));
+  console.log(line(C.dim('author')));
+  console.log(line(C.b(BRAND.author)));
+  console.log(line(C.y(BRAND.tip)));
+  console.log(line(C.dim(BRAND.networks)));
+  console.log(line(C.g(BRAND.evm)));
+  console.log(C.c('\u2570' + '\u2500'.repeat(inner) + '\u256f'));
+}
+
+function section(title) {
+  const w = TERM_W();
+  const label = ` ${title} `;
+  const side = Math.max(2, Math.floor((w - visible(label).length) / 2));
+  console.log('');
+  console.log(C.c('\u2500'.repeat(side)) + C.b(label) + C.c('\u2500'.repeat(Math.max(2, w - side - visible(label).length))));
+}
+
+function kv(key, value, width = 14) {
+  console.log(`  ${C.dim(padEnd(key, width))}${value}`);
+}
+
+const dot = (ok) => (ok ? C.g('\u25cf') : C.dim('\u25cb'));
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const die = (m, code = 1) => {
   console.error(C.r(`✖ ${m}`));
@@ -876,11 +936,11 @@ function showStreak(st) {
   const nextTierIn = pick(streak, ['daysToNextTier', 'toNextTier']) ?? pick(st, ['daysToNextTier']);
   const shield = pick(streak, ['shield', 'shields', 'shieldCount']);
 
-  console.log(C.b('— streak —'));
-  if (tier !== undefined) console.log(`  tier          ${tier}`);
-  if (days !== undefined) console.log(`  hari          ${days}`);
-  if (nextTierIn !== undefined) console.log(`  ke tier next  ${nextTierIn} hari`);
-  if (shield !== undefined) console.log(`  shield        ${shield}`);
+  section('streak');
+  if (tier !== undefined) kv('tier', C.b(tier));
+  if (days !== undefined) kv('hari', `${C.b(days)} ${C.dim(`\u00b7 ${'\u25c6'.repeat(Math.min(Number(days) || 0, 12))}`)}`);
+  if (nextTierIn !== undefined) kv('ke tier next', `${nextTierIn} hari`);
+  if (shield !== undefined) kv('shield', shield);
 
   const known = new Set([
     'streak', 'streakInfo', 'streakTier', 'memberTier', 'streakDays', 'streakCount', 'daysToNextTier',
@@ -899,7 +959,8 @@ function showStreak(st) {
 function showSyncResult(data) {
   const bd = data.breakdown ?? data.sync ?? data.reward ?? {};
   const total = pick(data, ['total', 'amount', 'reward', 'earned']) ?? pick(bd, ['total']);
-  console.log(C.g('✔ sync berhasil'));
+  section('sync');
+  console.log(`  ${C.g('\u2714')} ${C.b('sync berhasil')}`);
   const label = {
     base: 'dasar',
     streakMultiplier: 'pengali streak',
@@ -916,13 +977,13 @@ function showSyncResult(data) {
       parts.push(`${label[k] ?? k}=${show}`);
     }
   }
-  if (parts.length) console.log(`  rincian   ${parts.join('  ')}`);
-  if (total !== undefined) console.log(`  total     ${total}`);
+  if (parts.length) kv('rincian', parts.join('  '));
+  if (total !== undefined) kv('total', C.b(C.g(total)));
   if (data.streak || data.streakInfo) {
     const st = data.streak ?? data.streakInfo;
     const tier = pick(st, ['tier', 'tierKey']);
     const days = pick(st, ['days', 'count', 'current']);
-    if (tier !== undefined || days !== undefined) console.log(`  streak    ${days ?? '?'} hari · tier ${tier ?? '?'}`);
+    if (tier !== undefined || days !== undefined) kv('streak', `${days ?? '?'} hari · tier ${tier ?? '?'}`);
   }
   if (!parts.length && total === undefined) console.log(C.dim(`  respons: ${JSON.stringify(data).slice(0, 400)}`));
 }
@@ -932,7 +993,7 @@ async function cmdState(flags) {
   const st = await fetchSyncState();
   if (flags.json) return console.log(JSON.stringify(st, null, 2));
   const r = syncReadiness(st);
-  console.log(C.b('— sync state —'));
+  section('sync state');
   const canSyncLabel =
     r.canSync !== undefined
       ? r.canSync
@@ -943,13 +1004,13 @@ async function cmdState(flags) {
         : r.readyByTime === false
           ? C.dim('belum')
           : C.dim('tidak diketahui');
-  console.log(`  bisa sync     ${canSyncLabel}`);
-  if (r.lastAt) console.log(`  terakhir      ${new Date(r.lastAt).toLocaleString()}`);
-  if (r.nextAt) console.log(`  berikutnya    ${new Date(r.nextAt).toLocaleString()} (${hms(r.nextMs - Date.now())})`);
-  if (r.cooldownH !== undefined) console.log(`  cooldown      ${r.cooldownH} jam`);
-  if (st.balance !== undefined) console.log(`  saldo         ${typeof st.balance === 'object' ? JSON.stringify(st.balance) : st.balance}`);
+  kv('bisa sync', `${dot(r.canSync !== false)} ${canSyncLabel}`);
+  if (r.lastAt) kv('terakhir', new Date(r.lastAt).toLocaleString());
+  if (r.nextAt) kv('berikutnya', `${new Date(r.nextAt).toLocaleString()} ${C.dim(`(${hms(r.nextMs - Date.now())})`)}`);
+  if (r.cooldownH !== undefined) kv('cooldown', `${r.cooldownH} jam`);
+  if (st.balance !== undefined) kv('saldo', C.b(typeof st.balance === 'object' ? JSON.stringify(st.balance) : st.balance));
   if (st.humanVerificationRequired !== undefined)
-    console.log(`  human verify  ${st.humanVerificationRequired ? C.y('diperlukan') : C.g('tidak')}`);
+    kv('human verify', st.humanVerificationRequired ? C.y('diperlukan') : C.g('tidak'));
   showStreak(st);
 }
 
@@ -1065,27 +1126,58 @@ async function cmdRaw(method, p, bodyArg, flags) {
 // Main
 // ---------------------------------------------------------------------------
 
-const HELP = `zoi.js — client zoi.network (creds di .env)
+function help() {
+  banner();
+  console.log(`
+${C.b('PENGGUNAAN')}
+  node zoi.js <perintah> [opsi]
 
-  setup [--email E --password P] [--force]
-  edit | env | logout
-  login [--email E] [--password P] [--otp CODE] [--debug]
-  state | streak      status sync + streak (read-only)
-  sync               sync sekarang (--force, --dry-run, --json)
-  auto               sync otomatis mengikuti jadwal (--once, --dry-run)
-  me | balance | tx | ref
-  get <path> | post <path> '<json>'
+${C.b('PERINTAH')}
+  ${C.c('setup')}     isi .env tanpa editor (kredensial diuji dulu)
+  ${C.c('edit')}      buka .env di editor
+  ${C.c('login')}     login email + password (+ OTP bila diminta)
+  ${C.c('state')}     status sync & streak
+  ${C.c('sync')}      sync sekarang
+  ${C.c('auto')}      sync otomatis mengikuti jadwal
+  ${C.c('me')}        profil akun
+  ${C.c('balance')}   saldo wallet
+  ${C.c('tx')}        transaksi terakhir
+  ${C.c('ref')}       statistik referral
+  ${C.c('env')}       lihat isi .env (disamarkan)
+  ${C.c('logout')}    hapus token dari .env
+  ${C.c('about')}     info script & author
+  ${C.c('get')} / ${C.c('post')}  panggil endpoint apa pun
 
-.env: ZOI_EMAIL ZOI_PASSWORD ZOI_TOKEN ZOI_REFRESH_TOKEN ZOI_DEVICE_ID ZOI_API_BASE
-guard: ZOI_MIN_GAP_MS ZOI_JITTER_PCT ZOI_MAX_RETRIES ZOI_BACKOFF_MS ZOI_TIMEOUT_MS
-Base : ${API_BASE}
-`;
+${C.b('OPSI')}
+  --json   keluaran JSON mentah
+  --debug  tampilkan request/response
+  --otp N  kirim kode OTP
+  --once   auto: satu putaran lalu keluar
+  --dry-run  auto/sync: jangan kirim
+
+${C.dim('Base API: ' + API_BASE)}`);
+  authorBox();
+  console.log('');
+}
+
+function about() {
+  banner();
+  authorBox();
+  console.log('');
+  console.log(`  ${C.dim('script')}     zoi.js v${BRAND.version}`);
+  console.log(`  ${C.dim('target')}     ${BRAND.app}`);
+  console.log(`  ${C.dim('node')}       ${process.version}`);
+  console.log(`  ${C.dim('dependensi')} tidak ada`);
+  console.log('');
+}
 
 async function main() {
   const { cmd, args, flags } = parseArgs(process.argv.slice(2));
   if (ensureEnvFile()) ENV = readEnvFile();
   if (flags.env) process.env.ZOI_ENV_FILE = String(flags.env);
-  if (!cmd || cmd === 'help' || flags.help) return console.log(HELP);
+  if (!cmd || cmd === 'help' || flags.help) return help();
+  if (cmd === 'about') return about();
+  if (cmd === 'version' || flags.version === true || flags.v === true) return console.log(`zoi.js v${BRAND.version}`);
 
   switch (cmd) {
     case 'setup':
