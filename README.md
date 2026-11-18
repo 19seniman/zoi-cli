@@ -32,8 +32,8 @@ node zoi.js auto
 
 ## Author
 
-19Seniman · Traktir ☕
-
+19Seniman 
+· Traktir ☕
 BSC · ETH · Hype
 
 ```
