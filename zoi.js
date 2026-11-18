@@ -431,26 +431,64 @@ async function signIn(email, password) {
   return r.data;
 }
 
-/** Kirim OTP; nama field tidak terdokumentasi, jadi dicoba berurutan. */
-async function verifyOtp(email, code, challenge) {
+const PENDING_FILE = path.join(path.dirname(ENV_FILE), '.zoi-pending.json');
+
+function savePending(obj) {
+  try {
+    fs.writeFileSync(PENDING_FILE, JSON.stringify(obj, null, 2), { mode: 0o600 });
+  } catch {}
+}
+function loadPending() {
+  try {
+    return JSON.parse(fs.readFileSync(PENDING_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/** Field skalar dari respons sign-in — kandidat token/challenge yang harus dikirim balik. */
+function scalarFields(obj) {
+  const out = {};
+  if (!obj || typeof obj !== 'object') return out;
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === 'user' || v && typeof v === 'object') continue;
+    if (typeof v === 'string' || typeof v === 'number') out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * Kirim OTP. Server menolak email+code saja (missing_fields), jadi kandidat
+ * body disusun bertingkat: minimal → +semua field skalar respons sign-in.
+ */
+async function verifyOtp(email, code, signInData) {
+  const extra = scalarFields(signInData);
   const tries = [
     { email, code },
     { email, otp: code },
-    { email, code, challengeId: challenge },
-    { identifier: email, code },
+    { email, code, ...extra },
+    { ...extra, email, code },
+    { email, code, challengeId: signInData?.challengeId ?? signInData?.id },
   ].filter((b) => !Object.values(b).includes(undefined));
+
   const errs = [];
   for (const body of tries) {
     try {
       const r = await request('POST', '/auth/sign-in/verify-otp', { body, auth: false });
       console.log(C.g(`✔ OTP diterima (field: ${Object.keys(body).join(', ')})`));
+      try {
+        fs.existsSync(PENDING_FILE) && fs.unlinkSync(PENDING_FILE);
+      } catch {}
       return r.data;
     } catch (e) {
-      errs.push(`${Object.keys(body).join('+')}: ${e.code}`);
+      errs.push(`${Object.keys(body).join('+')} → ${e.code}`);
       if (!['missing_fields', 'invalid_otp', 'invalid_code', 'otp_invalid', 'VALIDATION_ERROR'].includes(e.code)) break;
     }
   }
-  throw new ApiError({ code: 'OTP_FAILED', message: errs.join(' | ') });
+  throw new ApiError({
+    code: 'OTP_FAILED',
+    message: errs.join('\n    '),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -519,9 +557,14 @@ async function cmdLogin(flags) {
     return;
   }
 
-  const needsOtp = data && (data.needsOtp === true || data.requiresOtp === true || data.otpRequired === true || data.challengeId);
+  const needsOtp =
+    data && (data.needsOtp === true || data.requiresOtp === true || data.otpRequired === true || data.challengeId || data.challenge || data.otpChallenge);
   if (needsOtp) {
+    savePending({ email, deviceId: getDeviceId(), response: data, savedAt: new Date().toISOString() });
     console.log(C.y('akun ini butuh kode OTP.'));
+    const keys = data && typeof data === 'object' ? Object.keys(data) : [];
+    console.log(C.dim(`  field respons sign-in: ${keys.join(', ') || '(kosong)'}`));
+    console.log(C.dim(`  respons (disamarkan): ${JSON.stringify(maskDeep(data)).slice(0, 400)}`));
     if (data.emailSentTo) console.log(C.dim(`  kode dikirim ke ${data.emailSentTo}`));
     let code = typeof flags.otp === 'string' ? flags.otp : null;
     if (!code && stdin.isTTY) code = await ask('Kode OTP: ');
@@ -529,7 +572,7 @@ async function cmdLogin(flags) {
       console.log(C.dim('  kirim kodenya: node zoi.js login --otp 123456'));
       process.exit(2);
     }
-    const v = await verifyOtp(email, code, data.challengeId);
+    const v = await verifyOtp(email, code, data);
     user = adoptAuth(v);
     if (session.token) {
       console.log(C.g(`✔ login OK — token ditulis ke ${ENV_FILE}`));
