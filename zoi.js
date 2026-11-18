@@ -69,6 +69,7 @@ ZOI_PASSWORD=
 # Diisi otomatis oleh script:
 ZOI_TOKEN=
 ZOI_REFRESH_TOKEN=
+ZOI_SESSION_TOKEN=
 ZOI_DEVICE_ID=
 #
 # Opsional
@@ -396,7 +397,13 @@ function extractAuth(payload) {
   const walk = (o, depth = 0) => {
     if (!o || typeof o !== 'object' || seen.has(o) || depth > 3) return null;
     seen.add(o);
-    const at = o.accessToken ?? o.access_token ?? o.token ?? o.jwt ?? (typeof o.access_token === 'string' ? o.access_token : null);
+    const at =
+      o.accessToken ??
+      o.access_token ??
+      o.sessionToken ??
+      o.token ??
+      o.jwt ??
+      null;
     if (typeof at === 'string' && at.length > 10) {
       return { token: at, refreshToken: o.refreshToken ?? o.refresh_token ?? null, user: o.user ?? root.user ?? null };
     }
@@ -519,6 +526,67 @@ function printUser(u) {
   for (const [k, v] of rows) console.log(`  ${k.padEnd(18)} ${v}`);
 }
 
+/**
+ * Selesaikan login: verify-otp mengembalikan {sessionToken, authVersion},
+ * bukan access token. Tukar dulu lewat /auth/exchange; kalau tidak ada,
+ * sessionToken dicoba langsung sebagai Bearer.
+ */
+async function finishLogin(payload) {
+  const sessionToken = payload?.sessionToken ?? payload?.session_token;
+  const authVersion = payload?.authVersion;
+
+  // kalau server sudah memberi access token, pakai itu
+  if (payload && (payload.accessToken || payload.access_token || payload.tokens)) {
+    const u = adoptAuth(payload);
+    return { ok: true, via: 'verify-otp', user: u };
+  }
+  if (!sessionToken) return { ok: false, via: null };
+
+  writeEnvFile({ ZOI_SESSION_TOKEN: sessionToken });
+  ENV = readEnvFile();
+  console.log(C.dim(`  sessionToken diterima (${mask(sessionToken, 6)}) — menukar ke access token`));
+
+  const deviceId = getDeviceId();
+  const cands = [
+    { sessionToken, deviceId },
+    { sessionToken },
+    { sessionToken, deviceId, authVersion },
+    { token: sessionToken, deviceId },
+  ];
+  const errs = [];
+  for (const body of cands) {
+    try {
+      const r = await request('POST', '/auth/exchange', { body, auth: false });
+      const t = extractAuth(r.data);
+      if (t) {
+        console.log(C.dim(`  /auth/exchange OK (field: ${Object.keys(body).join(', ')})`));
+        const u = adoptAuth(r.data);
+        return { ok: true, via: 'exchange', user: u };
+      }
+      errs.push(`${Object.keys(body).join('+')} → tanpa token`);
+    } catch (e) {
+      errs.push(`${Object.keys(body).join('+')} → ${e.code}`);
+      if (e.http === 429) break;
+    }
+  }
+
+  // fallback: sessionToken langsung sebagai Bearer
+  console.log(C.dim('  exchange gagal, coba sessionToken sebagai Bearer'));
+  const prev = session.token;
+  session.token = sessionToken;
+  try {
+    const me = await api.get('/auth/me');
+    writeEnvFile({ ZOI_TOKEN: sessionToken });
+    ENV = readEnvFile();
+    console.log(C.dim('  sessionToken berlaku langsung sebagai Bearer'));
+    return { ok: true, via: 'sessionToken', user: me.data };
+  } catch (e) {
+    session.token = prev;
+    errs.push(`bearer langsung → ${e.code}`);
+  }
+  return { ok: false, via: null, errs };
+}
+
 async function cmdLogin(flags) {
   if (flags.debug === true) process.env.ZOI_DEBUG = '1';
 
@@ -562,7 +630,7 @@ async function cmdLogin(flags) {
   ENV = readEnvFile();
 
   // respons bisa langsung berisi token, atau minta OTP
-  let user = adoptAuth(data);
+  let user = extractAuth(data) ? adoptAuth(data) : null;
   if (session.token) {
     console.log(C.g(`✔ login OK — token ditulis ke ${ENV_FILE}`));
     if (!user) {
@@ -589,13 +657,18 @@ async function cmdLogin(flags) {
       process.exit(2);
     }
     const v = await verifyOtp(email, code, data);
-    user = adoptAuth(v);
-    if (session.token) {
-      console.log(C.g(`✔ login OK — token ditulis ke ${ENV_FILE}`));
-      if (!user) user = (await api.get('/auth/me').catch(() => null))?.data;
-      if (user) printUser(user);
+    const fin = await finishLogin(v);
+    if (fin.ok && session.token) {
+      console.log(C.g(`✔ login OK (${fin.via}) — token ditulis ke ${ENV_FILE}`));
+      let u2 = fin.user;
+      if (!u2) u2 = (await api.get('/auth/me').catch(() => null))?.data;
+      if (u2) printUser(u2);
       return;
     }
+    console.log(C.r('✖ OTP diterima, tapi access token tidak didapat.'));
+    if (fin.errs) console.log(C.dim(`  ${fin.errs.join('\n  ')}`));
+    console.log(C.dim(`  respons verify: ${JSON.stringify(maskDeep(v)).slice(0, 300)}`));
+    process.exit(2);
   }
 
   console.log(C.r('✖ respons login tidak berisi token.'));
@@ -677,7 +750,7 @@ function cmdEnv() {
     console.log(C.y(`  (belum ada kredensial terisi — ${fs.statSync(ENV_FILE).size} byte)`));
     return console.log(C.dim('  isi: node zoi.js setup   atau   node zoi.js edit'));
   }
-  for (const k of ['ZOI_EMAIL', 'ZOI_PASSWORD', 'ZOI_TOKEN', 'ZOI_REFRESH_TOKEN', 'ZOI_DEVICE_ID', 'ZOI_API_BASE']) {
+  for (const k of ['ZOI_EMAIL', 'ZOI_PASSWORD', 'ZOI_TOKEN', 'ZOI_SESSION_TOKEN', 'ZOI_REFRESH_TOKEN', 'ZOI_DEVICE_ID', 'ZOI_API_BASE']) {
     if (ENV[k] !== undefined && ENV[k] !== '') {
       const shown = /PASSWORD|TOKEN/.test(k) ? mask(ENV[k], 4) : ENV[k];
       console.log(`  ${k.padEnd(17)} ${shown}`);
