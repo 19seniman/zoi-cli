@@ -83,7 +83,7 @@ function banner() {
   console.log(C.c('\u2502') + center(C.b(BRAND.name) + C.dim('  \u00b7  ' + BRAND.app), inner) + C.c('\u2502'));
   console.log(C.c('\u2502') + center(C.dim('sync harian + streak otomatis'), inner) + C.c('\u2502'));
   console.log(C.c('\u2570' + '\u2500'.repeat(inner) + '\u256f'));
-  console.log(C.dim(`  v${BRAND.version}  \\u00b7  ${API_BASE}`));
+  console.log(C.dim(`  v${BRAND.version}  ·  ${API_BASE}`));
 }
 
 function authorBox() {
